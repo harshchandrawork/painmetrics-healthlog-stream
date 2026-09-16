@@ -1,0 +1,6 @@
+__pycache__/
+.agents/
+.env
+.vscode/
+.idea/
+.streamlit/secrets.toml

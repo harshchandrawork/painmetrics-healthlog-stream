@@ -1,0 +1,29 @@
+# ==========================================
+# GLOBAL UI SETTINGS
+# ==========================================
+[ui]
+hideSidebarNav = true
+# layout = "wide"
+
+# ==========================================
+# CUSTOM LIGHT MODE (Soft Sage & Mint)
+# ==========================================
+[theme.light]
+base = "light"
+primaryColor = "#4A7C59"          # Deep comforting sage green for buttons and highlights
+backgroundColor = "#F4F7F5"       # Ultra-soft, off-white green tint to prevent screen glare for patients
+secondaryBackgroundColor = "#E4EAE6" # Muted pale mint for the sidebar and containers
+textColor = "#2F3E36"             # Dark slate green for highly readable, accessible text
+font = "sans serif"
+
+
+# ==========================================
+# CUSTOM DARK MODE (Deep Forest & Moss)
+# ==========================================
+[theme.dark]
+base = "dark"
+primaryColor = "#68A377"          # Softer, brighter mint green so it pops gently against the dark background
+backgroundColor = "#1C2421"       # Deep, calming forest-slate background (low light strain for patients)
+secondaryBackgroundColor = "#25312C" # Slightly lighter dark green for sidebar and card separation
+textColor = "#E6ECE8"             # Crisp, soft-white tint for easy reading in the dark
+font = "sans serif"

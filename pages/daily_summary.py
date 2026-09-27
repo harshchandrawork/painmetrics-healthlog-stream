@@ -37,7 +37,7 @@ def main():
 
     with st.container():
         st.write("### Sleep")
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             sleep_hours = st.slider(
                 "How many hours did you sleep for?",

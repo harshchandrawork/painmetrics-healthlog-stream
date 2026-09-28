@@ -3,7 +3,6 @@ import streamlit as st
 
 
 def main():
-    # button to return to homepage
     if st.button("Return Home", icon=":material/home:", type="tertiary"):
         st.switch_page(st.session_state["home_page"])
 
@@ -13,6 +12,11 @@ def main():
     )
     st.subheader("Pain characteristics page")
 
+    st.session_state.setdefault("patient_id", "")
+    st.caption(
+        "Database mapping: patient_id, entry_date, source_page, and record_id are added to each record for future local database storage."
+    )
+
     with st.container():
         st.write("### Choose date")
         col1, col2 = st.columns(2)
@@ -21,6 +25,7 @@ def main():
                 "Entry for today, or a custom date?",
                 ["Today", "Custom Date"],
                 horizontal=True,
+                key="pain_date_option",
                 captions=[
                     "Choose Today to enter the info for the current day",
                     "Choose Custom Date to enter the info for another date",
@@ -30,11 +35,16 @@ def main():
         with col2:
             if day == "Today":
                 selected_date = date.today()
+                st.session_state["pain_selected_date"] = selected_date.isoformat()
                 st.write(f"Entry date: {selected_date}")
             else:
                 selected_date = st.date_input(
-                    "Choose date", value="today", max_value="today"
+                    "Choose date",
+                    value=date.today(),
+                    max_value=date.today(),
+                    key="pain_date_input",
                 )
+                st.session_state["pain_selected_date"] = selected_date.isoformat()
                 st.write(f"Selected date: {selected_date}")
 
     with st.container():
@@ -45,29 +55,33 @@ def main():
                 "What is the primary region of your pain?",
                 max_chars=40,
                 placeholder="For example: Right SI Joint",
+                key="pain_primary_region",
             )
             primary_pain_intensity = st.slider(
                 "What was the intensity of pain at the primary region of pain?",
                 min_value=0,
                 max_value=10,
                 value=0,
+                key="pain_primary_intensity",
             )
         with col2:
             secondary_pain = st.text_input(
                 "What is the secondary region of your pain?",
                 max_chars=40,
                 placeholder="For example: Lower back",
+                key="pain_secondary_region",
             )
             secondary_pain_intensity = st.slider(
                 "What was the intensity of pain at the secondary region of pain?",
                 min_value=0,
                 max_value=10,
                 value=0,
+                key="pain_secondary_intensity",
             )
 
     with st.container():
         st.write("### Pain type")
-        stiff_time = st.segmented_control(
+        pain_type = st.segmented_control(
             "What type of pain did you feel?",
             [
                 "Dull ache",
@@ -80,11 +94,16 @@ def main():
                 "Pulling sensation",
                 "Pressure sensation",
             ],
+            key="pain_type",
         )
     with st.container():
         st.write("### Pain Radiation")
         radiate_bool = st.radio(
-            "Did the pain radiate downwards?", ["Yes", "No"], index=1, horizontal=True
+            "Did the pain radiate downwards?",
+            ["Yes", "No"],
+            index=1,
+            horizontal=True,
+            key="pain_radiate_bool",
         )
 
     with st.container():
@@ -94,16 +113,20 @@ def main():
             ["Yes", "No"],
             index=1,
             horizontal=True,
+            key="pain_diffuse_bool",
         )
 
     with st.container():
         st.write("### Deep of Surface pain")
-        radiate_bool = st.radio(
+        deep_surface_bool = st.radio(
             "Was the pain at the surface of the skin, or deep under the skin?",
             ["Yes", "No"],
             index=1,
             horizontal=True,
+            key="pain_depth_bool",
         )
+
+    st.button("Save pain log", type="primary", key="pain_submit_button")
 
 
 if __name__ == "__main__":

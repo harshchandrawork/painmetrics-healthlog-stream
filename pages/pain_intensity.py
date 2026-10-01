@@ -1,5 +1,9 @@
 from datetime import date
+
+import psycopg
 import streamlit as st
+
+from database import save_pain_characteristics
 
 
 def main():
@@ -13,9 +17,7 @@ def main():
     st.subheader("Pain characteristics page")
 
     st.session_state.setdefault("patient_id", "")
-    st.caption(
-        "Database mapping: patient_id, entry_date, source_page, and record_id are added to each record for future local database storage."
-    )
+    st.caption("Submitting this form saves the pain log with your patient ID and selected date.")
 
     with st.container():
         st.write("### Choose date")
@@ -108,25 +110,46 @@ def main():
 
     with st.container():
         st.write("### Pinpoint of Diffuse pain")
-        pin_diff_bool = st.radio(
-            "Was the pain at a pinpoint location, or was it diffuse?",
-            ["Yes", "No"],
+        pinpoint_or_diffuse = st.radio(
+            "Was the pain at a pinpoint location or diffuse?",
+            ["Pinpoint", "Diffuse"],
             index=1,
             horizontal=True,
-            key="pain_diffuse_bool",
+            key="pain_diffuse_type",
         )
 
     with st.container():
         st.write("### Deep of Surface pain")
-        deep_surface_bool = st.radio(
-            "Was the pain at the surface of the skin, or deep under the skin?",
-            ["Yes", "No"],
-            index=1,
+        deep_or_surface = st.radio(
+            "Was the pain deep under the skin or at the surface?",
+            ["Deep", "Surface"],
+            index=0,
             horizontal=True,
-            key="pain_depth_bool",
+            key="pain_depth_type",
         )
 
-    st.button("Save pain log", type="primary", key="pain_submit_button")
+    submitted = st.button("Save pain log", type="primary", key="pain_submit_button")
+    if submitted:
+        patient_id = st.session_state.get("patient_id", "").strip()
+        try:
+            save_pain_characteristics(
+                patient_id,
+                date.fromisoformat(st.session_state["pain_selected_date"]),
+                {
+                    "primary_location": st.session_state["pain_primary_region"],
+                    "secondary_location": st.session_state["pain_secondary_region"],
+                    "primary_intensity": st.session_state["pain_primary_intensity"],
+                    "secondary_intensity": st.session_state["pain_secondary_intensity"],
+                    "pain_type": st.session_state.get("pain_type"),
+                    "radiation": st.session_state["pain_radiate_bool"],
+                    "pinpoint_or_diffuse": pinpoint_or_diffuse,
+                    "deep_or_surface": deep_or_surface,
+                },
+                care_team_label=st.session_state.get("care_team_label", ""),
+            )
+            st.success("Pain log saved to the database.")
+        except (psycopg.Error, ValueError) as error:
+            st.error(f"Could not save the pain log: {error}")
 
 
 if __name__ == "__main__":

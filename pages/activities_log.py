@@ -1,5 +1,9 @@
 from datetime import date
+
+import psycopg
 import streamlit as st
+
+from database import save_activities
 
 st.session_state.setdefault("activity_count", 1)
 
@@ -8,26 +12,22 @@ def add_activity():
     st.session_state.activity_count += 1
 
 
-def submit_activities(selected_date=None):
+def collect_activities():
     activity_rows = []
     for index in range(st.session_state.activity_count):
         activity_rows.append(
             {
-                "patient_id": st.session_state.get("patient_id", ""),
-                "entry_date": selected_date.isoformat() if selected_date else st.session_state.get("activity_selected_date"),
-                "source_page": "activities",
-                "record_id": f"{st.session_state.get('patient_id','patient')}_{selected_date.isoformat() if selected_date else st.session_state.get('activity_selected_date', date.today().isoformat())}_activities_{index}",
                 "time_of_day": st.session_state.get(f"time_of_day_{index}", ""),
                 "activity_type": st.session_state.get(f"activity_type_{index}", ""),
                 "duration_mins": st.session_state.get(f"duration_mins_{index}", 0),
-                "repititions": st.session_state.get(f"repititions_{index}", 0),
+                "repetitions": st.session_state.get(f"repetitions_{index}", 0),
                 "pain_before": st.session_state.get(f"pain_before_{index}", 0),
                 "pain_during": st.session_state.get(f"pain_during_{index}", 0),
                 "pain_after_30mins": st.session_state.get(f"pain_after_30mins_{index}", 0),
                 "pain_after_2hrs": st.session_state.get(f"pain_after_2hrs_{index}", 0),
             }
         )
-    st.session_state.submitted_activities = activity_rows
+    return activity_rows
 
 
 def main():
@@ -39,9 +39,7 @@ def main():
     st.subheader("Activities page")
 
     st.session_state.setdefault("patient_id", "")
-    st.caption(
-        "Database mapping: patient_id, entry_date, source_page, and record_id are attached to every row for local database linking."
-    )
+    st.caption("Submitted activities are saved with your patient ID and selected date.")
 
     with st.container():
         st.write("### Choose date")
@@ -105,7 +103,7 @@ def main():
                     "Repetitions",
                     min_value=0,
                     step=1,
-                    key=f"repititions_{index}",
+                    key=f"repetitions_{index}",
                 )
 
                 with st.container():
@@ -160,11 +158,19 @@ def main():
         )
 
         if submitted:
-            submit_activities(date.fromisoformat(st.session_state["activity_selected_date"]))
-
-        if "submitted_activities" in st.session_state:
-            st.success("Activities submitted.")
-            st.json(st.session_state.submitted_activities)
+            try:
+                activity_date = date.fromisoformat(
+                    st.session_state["activity_selected_date"]
+                )
+                saved_count = save_activities(
+                    st.session_state.get("patient_id", ""),
+                    activity_date,
+                    collect_activities(),
+                    care_team_label=st.session_state.get("care_team_label", ""),
+                )
+                st.success(f"Saved {saved_count} activity log(s) to the database.")
+            except (psycopg.Error, ValueError) as error:
+                st.error(f"Could not save activities: {error}")
 
 
 if __name__ == "__main__":

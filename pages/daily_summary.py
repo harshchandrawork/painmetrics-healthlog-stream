@@ -1,23 +1,9 @@
 from datetime import date
+
+import psycopg
 import streamlit as st
 
-
-def apply_database_meta(page_name: str):
-    st.session_state.setdefault("patient_id", "")
-    st.session_state.setdefault("database_record_meta", {})
-
-    selected_date = st.session_state.get(f"{page_name}_selected_date")
-    if selected_date is None:
-        selected_date = date.today()
-
-    st.session_state["database_record_meta"] = {
-        "patient_id": st.session_state.get("patient_id", ""),
-        "entry_date": selected_date.isoformat() if hasattr(selected_date, "isoformat") else str(selected_date),
-        "source_page": page_name,
-        "record_id": f"{st.session_state.get('patient_id', 'patient')}_{selected_date.isoformat() if hasattr(selected_date, 'isoformat') else str(selected_date)}_{page_name}",
-    }
-
-    return st.session_state["database_record_meta"]
+from database import save_daily_summary
 
 
 def main():
@@ -28,11 +14,7 @@ def main():
     st.write("This tracker is to enable the patient to log their daily summary.")
     st.subheader("Daily Summary page")
 
-    meta = apply_database_meta("daily_summary")
-    st.caption(
-        "Database-ready record: "
-        f"patient_id={meta['patient_id']} | entry_date={meta['entry_date']} | source_page={meta['source_page']}"
-    )
+    st.caption("Submitting this form saves the summary with your patient ID and selected date.")
 
     with st.container():
         st.write("### Choose date")
@@ -63,8 +45,6 @@ def main():
                 )
                 st.session_state["daily_summary_selected_date"] = selected_date
                 st.write(f"Selected date: {selected_date}")
-
-    meta = apply_database_meta("daily_summary")
 
     with st.container():
         st.write("### Sleep")
@@ -358,6 +338,74 @@ def main():
         )
 
     submitted = st.button("Submit", type="primary", key="daily_summary_submit")
+    if submitted:
+        patient_id = st.session_state.get("patient_id", "").strip()
+        try:
+            save_daily_summary(
+                patient_id,
+                st.session_state["daily_summary_selected_date"],
+                {
+                    "sleep_hours": st.session_state["daily_summary_sleep_hours"],
+                    "sleep_quality": st.session_state["daily_summary_sleep_quality"],
+                    "stiffness_time": st.session_state["daily_summary_stiff_time"],
+                    "daily_summary_morning_stiff_degree": st.session_state.get(
+                        "daily_summary_morning_stiff_degree"
+                    ),
+                    "daily_summary_morning_stiff_duration": st.session_state.get(
+                        "daily_summary_morning_stiff_duration"
+                    ),
+                    "daily_summary_evening_stiff_degree": st.session_state.get(
+                        "daily_summary_evening_stiff_degree"
+                    ),
+                    "daily_summary_evening_stiff_duration": st.session_state.get(
+                        "daily_summary_evening_stiff_duration"
+                    ),
+                    "daily_summary_both_morning_stiff_degree": st.session_state.get(
+                        "daily_summary_both_morning_stiff_degree"
+                    ),
+                    "daily_summary_both_morning_stiff_duration": st.session_state.get(
+                        "daily_summary_both_morning_stiff_duration"
+                    ),
+                    "daily_summary_both_evening_stiff_degree": st.session_state.get(
+                        "daily_summary_both_evening_stiff_degree"
+                    ),
+                    "daily_summary_both_evening_stiff_duration": st.session_state.get(
+                        "daily_summary_both_evening_stiff_duration"
+                    ),
+                    "morning_pain": st.session_state["daily_summary_morning_pain_degree"],
+                    "afternoon_pain": st.session_state["daily_summary_noon_pain_degree"],
+                    "evening_pain": st.session_state["daily_summary_evening_pain_degree"],
+                    "night_pain": st.session_state["daily_summary_night_pain_degree"],
+                    "pain_region": st.session_state["daily_summary_pain_region"],
+                    "walking_minutes": st.session_state["daily_summary_walk_duration"],
+                    "sitting_minutes": st.session_state["daily_summary_sitting_duration"],
+                    "lumbar_support": st.session_state["daily_summary_lumbar_support"],
+                    "standing_minutes": st.session_state["daily_summary_standing_duration"],
+                    "exercise_done": st.session_state["daily_summary_exercise_bool"],
+                    "workout_minutes": st.session_state.get(
+                        "daily_summary_workout_duration"
+                    ),
+                    "medication_taken": st.session_state["daily_summary_medication_bool"],
+                    "medication_name": st.session_state.get(
+                        "daily_summary_medications", ""
+                    ),
+                    "medication_frequency": st.session_state.get(
+                        "daily_summary_medication_freq"
+                    ),
+                    "abnormal_fatigue": st.session_state[
+                        "daily_summary_abnormal_fatigue"
+                    ],
+                    "adequate_hydration": st.session_state["daily_summary_hydration"],
+                    "exhausting_day": st.session_state["daily_summary_exhausting_day"],
+                    "overall_description": st.session_state[
+                        "daily_summary_overall_description"
+                    ],
+                },
+                care_team_label=st.session_state.get("care_team_label", ""),
+            )
+            st.success("Daily summary saved to the database.")
+        except (psycopg.Error, ValueError) as error:
+            st.error(f"Could not save the daily summary: {error}")
 
 
 if __name__ == "__main__":

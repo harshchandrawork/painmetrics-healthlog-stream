@@ -5,3 +5,5 @@ streamlit==1.63.0
 streamlit_extras==1.6.0
 vega_datasets==0.9.0
 yfinance==1.7.0
+psycopg[binary]>=3.2,<4
+python-dotenv>=1,<2

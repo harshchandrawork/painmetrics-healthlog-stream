@@ -3,25 +3,6 @@ from streamlit_extras.card_selector import card_selector
 
 st.set_page_config(page_title="Symptoms Tracker App", layout="wide")
 
-APP_CONFIG = {
-    "database": {
-        "status": "not_connected",
-        "local_path": "local_database.db",
-        "tables": {
-            "daily_summary": "daily_summary_logs",
-            "activities": "activity_logs",
-            "pain": "pain_characteristics",
-        },
-    },
-    "record_keys": {
-        "patient_id": "patient_id",
-        "entry_date": "entry_date",
-        "source_page": "source_page",
-        "record_id": "record_id",
-    },
-}
-
-
 def home():
     st.title("Symptoms Tracker App")
     st.caption("A patient health log for daily pain, activity, and symptom tracking.")
@@ -36,14 +17,14 @@ def home():
             st.text_input(
                 "Patient ID / profile ID",
                 key="patient_id",
-                help="Use this value to map entries to a local database or clinic record later.",
+                help="This ID links all of this patient's submitted logs in the database.",
                 placeholder="Example: patient_001",
             )
         with col2:
             st.text_input(
                 "Care team / notes label",
                 key="care_team_label",
-                help="Optional label for internal tracking or future database linking.",
+                help="Optional label saved with the patient record when a log is submitted.",
                 placeholder="Example: clinic_1 or family_member_2",
             )
 
@@ -96,20 +77,15 @@ def home():
     if selected_page is not None:
         st.switch_page(pages[selected_page]["path"])
 
-    with st.expander("Database-ready structure and record keys", expanded=False):
+    with st.expander("How your logs are stored", expanded=False):
         st.markdown(
             """
-            This app is designed so it can be connected to a local database later. The current structure uses a consistent record pattern based on:
+            When you submit a Daily Summary, Activities, or Pain Characteristics log, the app saves it to the PostgreSQL `symptoms_tracker_db` database. Each log is associated with:
 
             - patient_id
             - entry_date
-            - source_page
-            - record_id
 
-            Example record ID pattern:
-            `patient_001_2026-09-27_daily_summary`
-
-            These values are ready for mapping to SQLite, PostgreSQL, or a local file-based database once connected.
+            Enter the same patient ID on the Home page for each log you want associated with the same patient. Daily summaries and pain logs are updated if submitted again for the same patient and date.
             """
         )
 

@@ -1,4 +1,6 @@
+import argparse
 import os
+from pathlib import Path
 
 import psycopg
 from dotenv import load_dotenv
@@ -6,8 +8,19 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.errors import DuplicateDatabase
 
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
-DATABASE_NAME = "symptoms_tracker_db"
+DATABASE_NAME = os.getenv("DATABASE_NAME", "symptoms_tracker_db")
+SCHEMA_MIGRATIONS = (
+    "ALTER TABLE patients ADD COLUMN IF NOT EXISTS care_team_label TEXT",
+    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS stiffness_time TEXT",
+    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS morning_stiffness_degree SMALLINT",
+    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS evening_stiffness_degree SMALLINT",
+    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS evening_stiffness_mins INTEGER",
+    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS exercise_done_bool BOOLEAN",
+    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS medication_taken_bool BOOLEAN",
+    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS medication_frequency SMALLINT",
+)
 PAIN_INTENSITY_SCALE = (
     (0, None, "No pain; completely normal movement."),
     (1, "Barely Noticeable", "Minor ache; does not affect posture or movement."),
@@ -18,7 +31,11 @@ PAIN_INTENSITY_SCALE = (
         "Noticeable; causes highly noticable changes in sitting or walking posture.",
     ),
     (4, "Distracting", "Cannot be ignored; requires changing positions frequently."),
-    (5, "Moderate", "Interferes with focus; actively avoids prolonged sitting or driving."),
+    (
+        5,
+        "Moderate",
+        "Interferes with focus; actively avoids prolonged sitting or driving.",
+    ),
     (6, "Distressing", "Limits basic activities; short walk or standing is painful."),
     (
         7,
@@ -176,6 +193,49 @@ TABLES = (
     )
     """,
 )
+RLS_POLICIES = (
+    (
+        "patients_owner_access",
+        "patients",
+        "patient_id = current_setting('app.current_user_id', true)",
+    ),
+    (
+        "daily_summary_logs_owner_access",
+        "daily_summary_logs",
+        "patient_id = current_setting('app.current_user_id', true)",
+    ),
+    (
+        "activity_logs_owner_access",
+        "activity_logs",
+        "patient_id = current_setting('app.current_user_id', true)",
+    ),
+    (
+        "pain_characteristics_owner_access",
+        "pain_characteristics",
+        "patient_id = current_setting('app.current_user_id', true)",
+    ),
+    (
+        "daily_summary_pain_regions_owner_access",
+        "daily_summary_pain_regions",
+        "EXISTS (SELECT 1 FROM daily_summary_logs AS owner_log "
+        "WHERE owner_log.id = daily_summary_id "
+        "AND owner_log.patient_id = current_setting('app.current_user_id', true))",
+    ),
+    (
+        "daily_summary_exercises_owner_access",
+        "daily_summary_exercises",
+        "EXISTS (SELECT 1 FROM daily_summary_logs AS owner_log "
+        "WHERE owner_log.id = daily_summary_id "
+        "AND owner_log.patient_id = current_setting('app.current_user_id', true))",
+    ),
+    (
+        "pain_characteristic_types_owner_access",
+        "pain_characteristic_types",
+        "EXISTS (SELECT 1 FROM pain_characteristics AS owner_log "
+        "WHERE owner_log.id = pain_characteristic_id "
+        "AND owner_log.patient_id = current_setting('app.current_user_id', true))",
+    ),
+)
 
 
 def connection_parameters(database_name: str) -> dict[str, str]:
@@ -204,6 +264,39 @@ def create_tables_and_reference_data(cursor: psycopg.Cursor) -> None:
     for statement in TABLES:
         cursor.execute(statement)
 
+    for statement in SCHEMA_MIGRATIONS:
+        cursor.execute(statement)
+
+    for table_name in (
+        "patients",
+        "pain_intensity_scale",
+        "pain_types",
+        "daily_summary_logs",
+        "daily_summary_exercises",
+        "daily_summary_pain_regions",
+        "activity_logs",
+        "pain_characteristics",
+        "pain_characteristic_types",
+    ):
+        cursor.execute(
+            sql.SQL("ALTER TABLE {} ENABLE ROW LEVEL SECURITY").format(
+                sql.Identifier(table_name)
+            )
+        )
+
+    for policy_name, table_name, predicate in RLS_POLICIES:
+        policy = sql.Identifier(policy_name)
+        table = sql.Identifier(table_name)
+        cursor.execute(sql.SQL("DROP POLICY IF EXISTS {} ON {}").format(policy, table))
+        cursor.execute(
+            sql.SQL("CREATE POLICY {} ON {} FOR ALL USING ({}) WITH CHECK ({})").format(
+                policy,
+                table,
+                sql.SQL(predicate),
+                sql.SQL(predicate),
+            )
+        )
+
     cursor.executemany(
         """
         INSERT INTO pain_intensity_scale (score, descriptor, functional_meaning)
@@ -225,8 +318,16 @@ def create_tables_and_reference_data(cursor: psycopg.Cursor) -> None:
 
 
 def main() -> None:
-    load_dotenv()
-    create_database()
+    parser = argparse.ArgumentParser(description="Initialize the PainMetrics database.")
+    parser.add_argument(
+        "--schema-only",
+        action="store_true",
+        help="Initialize tables in the configured database without creating a database.",
+    )
+    arguments = parser.parse_args()
+
+    if not arguments.schema_only:
+        create_database()
     with psycopg.connect(**connection_parameters(DATABASE_NAME)) as connection:
         with connection.cursor() as cursor:
             create_tables_and_reference_data(cursor)

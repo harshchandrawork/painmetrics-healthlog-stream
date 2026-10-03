@@ -9,8 +9,9 @@ import psycopg
 from dotenv import load_dotenv
 from psycopg.conninfo import conninfo_to_dict
 
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
-DATABASE_NAME = "symptoms_tracker_db"
+DATABASE_NAME = os.getenv("DATABASE_NAME", "symptoms_tracker_db")
 PAIN_TYPE_CODES = {
     "Dull ache": "DULL",
     "Sharp pain": "SHARP",
@@ -23,34 +24,24 @@ PAIN_TYPE_CODES = {
     "Pressure sensation": "PRESS",
 }
 
-LIVE_SCHEMA_MIGRATIONS = (
-    "ALTER TABLE patients ADD COLUMN IF NOT EXISTS care_team_label TEXT",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS stiffness_time TEXT",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS morning_stiffness_degree SMALLINT",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS evening_stiffness_degree SMALLINT",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS evening_stiffness_mins INTEGER",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS exercise_done_bool BOOLEAN",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS medication_taken_bool BOOLEAN",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS medication_frequency SMALLINT",
-)
-
 
 def _connect() -> psycopg.Connection:
-    load_dotenv(Path(__file__).resolve().parent / ".env")
     connection_info = os.getenv("CONN_INFO")
     if not connection_info:
         raise ValueError(
-            "Database connection is not configured. Set CONN_INFO in the project .env file."
+            "Database connection is not configured. Set CONN_INFO in the environment or project .env file."
         )
 
     connection_parameters = conninfo_to_dict(connection_info)
-    connection_parameters["dbname"] = DATABASE_NAME
+    connection_parameters.setdefault("dbname", DATABASE_NAME)
     return psycopg.connect(**connection_parameters)
 
 
-def _ensure_live_schema(cursor: psycopg.Cursor) -> None:
-    for statement in LIVE_SCHEMA_MIGRATIONS:
-        cursor.execute(statement)
+def _set_rls_identity(cursor: psycopg.Cursor, patient_id: str) -> None:
+    cursor.execute(
+        "SELECT set_config('app.current_user_id', %s, true)",
+        (patient_id.strip(),),
+    )
 
 
 def _ensure_patient(
@@ -60,7 +51,9 @@ def _ensure_patient(
 ) -> None:
     normalized_patient_id = patient_id.strip()
     if not normalized_patient_id:
-        raise ValueError("Enter a patient ID on the Home page before saving a log.")
+        raise ValueError(
+            "An authenticated account key is required before saving a log."
+        )
     cursor.execute(
         """
         INSERT INTO patients (patient_id, care_team_label)
@@ -145,7 +138,7 @@ def save_daily_summary(
 
     with _connect() as connection:
         with connection.cursor() as cursor:
-            _ensure_live_schema(cursor)
+            _set_rls_identity(cursor, patient_id)
             _ensure_patient(cursor, patient_id, care_team_label)
             cursor.execute(
                 """
@@ -250,7 +243,7 @@ def save_activities(
 
     with _connect() as connection:
         with connection.cursor() as cursor:
-            _ensure_live_schema(cursor)
+            _set_rls_identity(cursor, patient_id)
             _ensure_patient(cursor, patient_id, care_team_label)
             cursor.execute(
                 """
@@ -294,7 +287,7 @@ def save_pain_characteristics(
 
     with _connect() as connection:
         with connection.cursor() as cursor:
-            _ensure_live_schema(cursor)
+            _set_rls_identity(cursor, patient_id)
             _ensure_patient(cursor, patient_id, care_team_label)
             cursor.execute(
                 """

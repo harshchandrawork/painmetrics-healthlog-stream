@@ -21,7 +21,7 @@
 
 Pain and symptom experiences are difficult to summarize from memory alone. PainMetrics provides a repeatable way to record observations over time, including pain intensity at different times of day, associated activities, sleep, stiffness, and other daily factors.
 
-The project currently focuses on **data capture and persistence**. It stores records in PostgreSQL using patient/date keys and a relational schema. It does **not** currently provide statistical reports, trend charts, predictive models, or medical recommendations; the collected structured data can support those analyses in a separate, explicitly designed next step.
+The project currently focuses on **authenticated data capture and persistence**. It stores records in PostgreSQL using a stable identity from an OpenID Connect sign-in and a relational schema. It does **not** currently provide statistical reports, trend charts, predictive models, or medical recommendations; the collected structured data can support those analyses in a separate, explicitly designed next step.
 
 ### Project goals
 
@@ -47,11 +47,12 @@ Record primary and secondary pain locations and intensities, pain type, whether 
 
 ### Additional capabilities
 
-- Streamlit multi-page navigation with a shared patient/profile ID.
+- Streamlit multi-page navigation with OpenID Connect sign-in.
+- Per-account data keys derived server-side from the verified identity-provider issuer and subject.
 - Current-date or past-date entry selection.
 - PostgreSQL persistence with parameterized database queries.
 - Database constraints, foreign keys, and reference tables for pain scores and pain types.
-- Repeat submissions update daily summary and pain-characteristic records for the same profile and date. Submitting the activity form replaces entries previously submitted through the app for that profile and date.
+- Repeat submissions update daily summary and pain-characteristic records for the same account and date. Submitting the activity form replaces entries previously submitted through the app for that account and date.
 - A fresh-install script creates the database, schema, tables, and reference data.
 
 ## Data science and analysis
@@ -121,7 +122,7 @@ The database is initialized by [`db_init.py`](db_init.py). Its core tables are:
 | `pain_intensity_scale` | Reference scores from 0 to 10 |
 | `pain_types` | Reference codes for pain types |
 
-Primary and foreign keys link related records, while unique constraints support the application's profile/date update behavior. The persistence functions are in [`database.py`](database.py); database initialization and data entry are separate responsibilities.
+Primary and foreign keys link related records, while unique constraints support the application's account/date update behavior. The app uses an opaque, stable account key in the existing `patient_id` columns. The persistence functions are in [`database.py`](database.py); database initialization and data entry are separate responsibilities.
 
 ## Getting started
 
@@ -129,7 +130,7 @@ Primary and foreign keys link related records, while unique constraints support 
 
 - Python 3.11 or later
 - PostgreSQL running locally or reachable from your machine
-- A PostgreSQL role with permission to create a database (needed for the initial setup script)
+- A PostgreSQL role with permission to create a database (needed for local initialization)
 
 ### 1. Get the project
 
@@ -181,15 +182,97 @@ From the project root, run:
 python db_init.py
 ```
 
-The setup script connects to PostgreSQL, creates the `symptoms_tracker_db` database if needed, creates the application tables, and seeds the pain-score and pain-type lookup tables. It does not import anyone's historical patient records.
+The setup script connects to PostgreSQL, creates the `symptoms_tracker_db` database if needed, creates the application tables, enables Row Level Security without public policies, and seeds the pain-score and pain-type lookup tables. It does not import historical records.
 
 ### 6. Run the application
+
+Configure a local OIDC provider first. For Google, register `http://localhost:8501/oauth2callback` as an authorized redirect URI and place the credentials in `.streamlit/secrets.toml`:
+
+```toml
+[auth]
+redirect_uri = "http://localhost:8501/oauth2callback"
+cookie_secret = "REPLACE_WITH_A_RANDOM_SECRET"
+client_id = "YOUR_OIDC_CLIENT_ID"
+client_secret = "YOUR_OIDC_CLIENT_SECRET"
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+```
+
+Generate a random cookie secret locally, for example with `openssl rand -hex 32`. This secrets file is git-ignored; never commit it.
+
+Then run:
 
 ```bash
 streamlit run streamlit_app.py
 ```
 
-Open the local URL printed by Streamlit. Enter a consistent profile ID on the home page, choose a logging page, select a date, and submit an entry.
+Sign in, choose a logging page, select a date, and submit an entry. For another OIDC provider, use its client credentials and discovery URL instead of Google's.
+
+## Deploy to Streamlit Community Cloud and Supabase
+
+The application connects to PostgreSQL with Psycopg, so Supabase's hosted Postgres database can be used directly. The Cloud app connects server-side; browser users never receive the database connection string.
+
+1. Commit and push the application changes to GitHub. Keep `.env`, `.streamlit/secrets.toml`, database dumps, and `sample_data/` out of the repository. The importer script is tracked, but the CSV data remains local unless you deliberately provide a sanitized test dataset.
+2. In Streamlit Community Cloud, create an app from the repository with `streamlit_app.py` as the entry point. It can be deployed before secrets are configured to obtain its public app URL, but do not share it as ready for use yet.
+3. Create a Supabase project. In its **Connect** dialog, copy the PostgreSQL **Session pooler** connection string. The pooler is a practical choice for IPv4-only hosting. Use the `postgres` database and keep SSL enabled. Do not use the Supabase `anon` key as a PostgreSQL password.
+4. From the local project checkout, place the copied connection string in the local `.env` file and select Supabase's existing database:
+
+   ```dotenv
+   CONN_INFO="postgresql://postgres.PROJECT_REF:YOUR_PASSWORD@POOLER_HOST:5432/postgres?sslmode=require"
+   DATABASE_NAME=postgres
+   ```
+
+   Replace the placeholders with the exact values from Supabase. Percent-encode reserved characters in the password if needed. Run the schema initializer from the project root:
+
+   ```bash
+   python db_init.py --schema-only
+   ```
+
+   This creates the tables, keys, constraints, reference rows, and owner-scoped Row Level Security policies. Run initialization with the Supabase admin connection only; the Streamlit app should use a separate restricted role.
+5. In the Supabase SQL Editor, create a role for the app. Replace the password with a unique random value, keep it private, and do not reuse your `postgres` password:
+
+   ```sql
+   CREATE ROLE painmetrics_app
+       WITH LOGIN PASSWORD 'REPLACE_WITH_A_UNIQUE_RANDOM_PASSWORD'
+       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+   GRANT CONNECT ON DATABASE postgres TO painmetrics_app;
+   GRANT USAGE ON SCHEMA public TO painmetrics_app;
+   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+       patients, daily_summary_logs, daily_summary_pain_regions,
+       daily_summary_exercises, activity_logs, pain_characteristics,
+       pain_characteristic_types
+       TO painmetrics_app;
+   GRANT USAGE, SELECT ON SEQUENCE
+       daily_summary_logs_id_seq, activity_logs_id_seq,
+       pain_characteristics_id_seq
+       TO painmetrics_app;
+   ```
+
+   This role does not own the tables and cannot bypass their RLS policies. Keep the admin credential only for schema initialization and imports; use the restricted role in the deployed app.
+6. Create an OIDC client in Google Cloud (or another OIDC provider), using the deployed app URL followed by `/oauth2callback` as an authorized redirect URI. Configure the provider so the intended audience can self-register/sign in; remove provider-side allowlists if any account should be able to use the app.
+7. In the Cloud app's **Settings → Secrets**, add TOML in this shape, replacing all placeholders. For `CONN_INFO`, use the Supabase session-pooler host/port and database from the admin connection, but the `painmetrics_app.PROJECT_REF` username and the restricted role's password. Generate a fresh random cookie secret; never reuse or publish it.
+
+    ```toml
+    CONN_INFO = "postgresql://painmetrics_app.PROJECT_REF:APP_ROLE_PASSWORD@POOLER_HOST:5432/postgres?sslmode=require"
+    DATABASE_NAME = "postgres"
+
+    [auth]
+    redirect_uri = "https://YOUR-APP.streamlit.app/oauth2callback"
+    cookie_secret = "A_LONG_RANDOM_SECRET"
+    client_id = "YOUR_OIDC_CLIENT_ID"
+    client_secret = "YOUR_OIDC_CLIENT_SECRET"
+    server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+    ```
+
+    Save the secrets and reboot the app. Test sign-in with two separate accounts and confirm both can submit logs. The RLS policies should prevent either account from writing under the other's owner key. The deployed app URL is the public entry point.
+8. If the local `sample_data/data/` CSV files are present and you want to load them, run the importer locally using the admin connection in `.env`:
+
+   ```bash
+   IMPORT_PATIENT_ID=sample_patient python import_existing_data.py
+   ```
+
+   This importer supports the repository's CSV format; it does not import a PostgreSQL dump. To associate an import with one user's account, sign into the app, copy that account's data key from the collapsed section on Home, and use it as `IMPORT_PATIENT_ID`. For actual existing records, first make a private backup, check that source and target schemas match, and plan an explicit account-to-record mapping. Never upload sensitive data to GitHub.
+
+The current app captures and stores logs but does not yet include pages to browse, export, or delete saved history. Add and test those workflows before describing it as a complete personal health-record service.
 
 ## Repository structure
 
@@ -202,6 +285,8 @@ Open the local URL printed by Streamlit. Enter a consistent profile ID on the ho
 │   └── pain_intensity.py     # Pain location and characteristic entry
 ├── database.py               # PostgreSQL persistence functions
 ├── db_init.py                # Fresh database/schema/reference-data setup
+├── import_existing_data.py   # Optional local CSV importer
+├── user_identity.py          # OIDC-derived account key
 ├── requirements.txt          # Python dependencies
 ├── .streamlit/config.toml    # Streamlit theme and UI settings
 └── LICENSE                   # MIT License
@@ -209,25 +294,25 @@ Open the local URL printed by Streamlit. Enter a consistent profile ID on the ho
 
 ## Configuration and data handling
 
-- Database connection settings are read from `CONN_INFO` in the project-root `.env` file.
-- The application database is named `symptoms_tracker_db`.
-- Patient/profile IDs are user-entered labels used to associate records. They are **not** accounts, authentication, or access controls.
+- Database connection settings are read from `CONN_INFO`; `DATABASE_NAME` defaults to `symptoms_tracker_db` and can be set to `postgres` for Supabase.
+- `.streamlit/secrets.toml` configures local OIDC sign-in and must never be committed.
+- Account data keys are SHA-256 hashes of the identity-provider issuer and subject; email addresses are not used as database keys.
 - The app stores self-reported health-related information, including pain, medication, and symptom notes. Use synthetic data while evaluating the project.
-- Historical CSV import tooling and local sample data are intentionally excluded from the public repository. Fresh installation creates an empty application database with required reference rows.
+- The CSV importer is tracked, but local sample data remains excluded from the public repository. Fresh installation creates an empty application database with required reference rows.
 
 ## Privacy, safety, and limitations
 
 > **Prototype notice:** PainMetrics is an educational portfolio project, not a medical device or clinical decision-support system. It does not diagnose, treat, or replace advice from a qualified healthcare professional.
 
-- Do not enter real patient or other sensitive personal health information into a public or otherwise unreviewed deployment.
-- A profile ID does not protect data. This project does not implement user authentication, authorization, tenant isolation, consent management, audit logging, or a production privacy/compliance program.
+- Do not enter real patient or other sensitive personal health information into this educational deployment. OIDC sign-in does not make the application a production privacy/compliance program.
+- The app derives account ownership server-side and the restricted database role is governed by RLS policies, but it has not undergone a security review or compliance assessment. Protect both the database role secret and the Supabase admin credentials.
 - Anyone deploying a modified copy is responsible for securing the application, PostgreSQL instance, credentials, backups, network access, and any data they collect, as well as assessing applicable laws and institutional policies.
 - Health observations are self-reported and may be incomplete, inaccurate, or affected by selection bias. They should not be treated as clinical evidence without appropriate review.
 - Database persistence and entry forms are implemented; analytics charts, export/report workflows, automated data-quality reporting, and predictive modeling are not currently part of the app.
 
 ## Development notes
 
-Run the setup script from the repository root so the root `.env` file is discovered. The setup requires PostgreSQL to be available and the configured role to have database-creation privileges.
+Run the setup script from the repository root so the root `.env` file is discovered. Local initialization requires PostgreSQL to be available and the configured role to have database-creation privileges. For Supabase, set `DATABASE_NAME=postgres` and run `python db_init.py --schema-only`.
 
 There is currently no committed automated test suite or CI workflow. Before relying on changes, validate Python syntax and test database initialization and each entry flow against a disposable PostgreSQL database with synthetic data.
 
@@ -239,7 +324,7 @@ Possible next steps for the project include:
 - Build exploratory trend charts with clearly documented aggregation and filtering choices.
 - Add data-quality checks and a documented export path for analysis.
 - Add automated tests for form-to-database behavior and schema initialization.
-- Explore privacy-conscious authentication and deployment architecture before any real-world data collection.
+- Complete a security, privacy, consent, and data-retention review before any real-world data collection.
 
 ## Contributing
 

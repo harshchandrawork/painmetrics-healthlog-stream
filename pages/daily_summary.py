@@ -4,6 +4,7 @@ import psycopg
 import streamlit as st
 
 from database import save_daily_summary
+from user_identity import authenticated_user_id
 
 
 def main():
@@ -14,7 +15,9 @@ def main():
     st.write("This tracker is to enable the patient to log their daily summary.")
     st.subheader("Daily Summary page")
 
-    st.caption("Submitting this form saves the summary with your patient ID and selected date.")
+    st.caption(
+        "Submitting this form saves the summary with your patient ID and selected date."
+    )
 
     with st.container():
         st.write("### Choose date")
@@ -339,7 +342,7 @@ def main():
 
     submitted = st.button("Submit", type="primary", key="daily_summary_submit")
     if submitted:
-        patient_id = st.session_state.get("patient_id", "").strip()
+        patient_id = authenticated_user_id()
         try:
             save_daily_summary(
                 patient_id,
@@ -372,20 +375,32 @@ def main():
                     "daily_summary_both_evening_stiff_duration": st.session_state.get(
                         "daily_summary_both_evening_stiff_duration"
                     ),
-                    "morning_pain": st.session_state["daily_summary_morning_pain_degree"],
-                    "afternoon_pain": st.session_state["daily_summary_noon_pain_degree"],
-                    "evening_pain": st.session_state["daily_summary_evening_pain_degree"],
+                    "morning_pain": st.session_state[
+                        "daily_summary_morning_pain_degree"
+                    ],
+                    "afternoon_pain": st.session_state[
+                        "daily_summary_noon_pain_degree"
+                    ],
+                    "evening_pain": st.session_state[
+                        "daily_summary_evening_pain_degree"
+                    ],
                     "night_pain": st.session_state["daily_summary_night_pain_degree"],
                     "pain_region": st.session_state["daily_summary_pain_region"],
                     "walking_minutes": st.session_state["daily_summary_walk_duration"],
-                    "sitting_minutes": st.session_state["daily_summary_sitting_duration"],
+                    "sitting_minutes": st.session_state[
+                        "daily_summary_sitting_duration"
+                    ],
                     "lumbar_support": st.session_state["daily_summary_lumbar_support"],
-                    "standing_minutes": st.session_state["daily_summary_standing_duration"],
+                    "standing_minutes": st.session_state[
+                        "daily_summary_standing_duration"
+                    ],
                     "exercise_done": st.session_state["daily_summary_exercise_bool"],
                     "workout_minutes": st.session_state.get(
                         "daily_summary_workout_duration"
                     ),
-                    "medication_taken": st.session_state["daily_summary_medication_bool"],
+                    "medication_taken": st.session_state[
+                        "daily_summary_medication_bool"
+                    ],
                     "medication_name": st.session_state.get(
                         "daily_summary_medications", ""
                     ),
@@ -401,7 +416,6 @@ def main():
                         "daily_summary_overall_description"
                     ],
                 },
-                care_team_label=st.session_state.get("care_team_label", ""),
             )
             st.success("Daily summary saved to the database.")
         except (psycopg.Error, ValueError) as error:

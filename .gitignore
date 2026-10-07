@@ -1,9 +1,9 @@
 __pycache__/
 .agents/
 .env
+.env.example
 .vscode/
 .idea/
 .streamlit/secrets.toml
 sample_data/
 db_testing.py
-import_existing_data.py

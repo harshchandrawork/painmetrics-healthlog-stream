@@ -9,8 +9,9 @@ import psycopg
 from dotenv import load_dotenv
 from psycopg.conninfo import conninfo_to_dict
 
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
-DATABASE_NAME = "symptoms_tracker_db"
+DATABASE_NAME = os.getenv("DATABASE_NAME", "symptoms_tracker_db")
 PAIN_TYPE_CODES = {
     "Dull ache": "DULL",
     "Sharp pain": "SHARP",
@@ -23,34 +24,24 @@ PAIN_TYPE_CODES = {
     "Pressure sensation": "PRESS",
 }
 
-LIVE_SCHEMA_MIGRATIONS = (
-    "ALTER TABLE patients ADD COLUMN IF NOT EXISTS care_team_label TEXT",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS stiffness_time TEXT",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS morning_stiffness_degree SMALLINT",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS evening_stiffness_degree SMALLINT",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS evening_stiffness_mins INTEGER",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS exercise_done_bool BOOLEAN",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS medication_taken_bool BOOLEAN",
-    "ALTER TABLE daily_summary_logs ADD COLUMN IF NOT EXISTS medication_frequency SMALLINT",
-)
-
 
 def _connect() -> psycopg.Connection:
-    load_dotenv(Path(__file__).resolve().parent / ".env")
     connection_info = os.getenv("CONN_INFO")
     if not connection_info:
         raise ValueError(
-            "Database connection is not configured. Set CONN_INFO in the project .env file."
+            "Database connection is not configured. Set CONN_INFO in the environment or project .env file."
         )
 
     connection_parameters = conninfo_to_dict(connection_info)
-    connection_parameters["dbname"] = DATABASE_NAME
+    connection_parameters.setdefault("dbname", DATABASE_NAME)
     return psycopg.connect(**connection_parameters)
 
 
-def _ensure_live_schema(cursor: psycopg.Cursor) -> None:
-    for statement in LIVE_SCHEMA_MIGRATIONS:
-        cursor.execute(statement)
+def _set_rls_identity(cursor: psycopg.Cursor, patient_id: str) -> None:
+    cursor.execute(
+        "SELECT set_config('app.current_user_id', %s, true)",
+        (patient_id.strip(),),
+    )
 
 
 def _ensure_patient(
@@ -60,7 +51,9 @@ def _ensure_patient(
 ) -> None:
     normalized_patient_id = patient_id.strip()
     if not normalized_patient_id:
-        raise ValueError("Enter a patient ID on the Home page before saving a log.")
+        raise ValueError(
+            "An authenticated account key is required before saving a log."
+        )
     cursor.execute(
         """
         INSERT INTO patients (patient_id, care_team_label)
@@ -81,6 +74,124 @@ def _boolean_choice(value: str) -> bool:
 
 def _pain_regions(value: str) -> list[str]:
     return [region.strip() for region in re.split(r"[;,]", value) if region.strip()]
+
+
+def get_latest_log_dates(patient_id: str) -> dict[str, date | None]:
+    normalized_patient_id = patient_id.strip()
+    if not normalized_patient_id:
+        raise ValueError("An authenticated account key is required to read logs.")
+
+    with _connect() as connection:
+        with connection.cursor() as cursor:
+            _set_rls_identity(cursor, normalized_patient_id)
+            cursor.execute(
+                """
+                SELECT
+                    (SELECT MAX(entry_date) FROM daily_summary_logs
+                     WHERE patient_id = %s),
+                    (SELECT MAX(entry_date) FROM activity_logs
+                     WHERE patient_id = %s),
+                    (SELECT MAX(entry_date) FROM pain_characteristics
+                     WHERE patient_id = %s)
+                """,
+                (normalized_patient_id,) * 3,
+            )
+            latest_dates = cursor.fetchone()
+
+    return {
+        "Daily summary": latest_dates[0],
+        "Activities": latest_dates[1],
+        "Pain": latest_dates[2],
+    }
+
+
+def get_analysis_data(patient_id: str) -> dict[str, list[dict[str, Any]]]:
+    normalized_patient_id = patient_id.strip()
+    if not normalized_patient_id:
+        raise ValueError("An authenticated account key is required to read logs.")
+
+    with _connect() as connection:
+        with connection.cursor() as cursor:
+            _set_rls_identity(cursor, normalized_patient_id)
+
+            def fetch_rows(query: str) -> list[dict[str, Any]]:
+                cursor.execute(query, (normalized_patient_id,))
+                columns = [column.name for column in cursor.description]
+                return [
+                    dict(zip(columns, row, strict=True))
+                    for row in cursor.fetchall()
+                ]
+
+            daily_summaries = fetch_rows(
+                """
+                SELECT
+                    entry_date, sleep_hours, sleep_quality, stiffness_time,
+                    morning_stiffness_degree, morning_stiffness_mins,
+                    evening_stiffness_degree, evening_stiffness_mins,
+                    morning_pain, afternoon_pain, evening_pain, night_pain,
+                    total_walking_mins, sitting_hours,
+                    lumbar_support_type_seat_bool, standing_mins,
+                    exercise_done_bool, exercise_minutes, medication_taken_bool,
+                    medication_frequency, medication_name, abnormal_fatigue_bool,
+                    adequate_hydration_bool, exhausting_day_bool,
+                    COALESCE((
+                        SELECT array_agg(pain_region ORDER BY pain_region)
+                        FROM daily_summary_pain_regions
+                        WHERE daily_summary_id = daily_summary_logs.id
+                    ), ARRAY[]::TEXT[]) AS pain_regions,
+                    COALESCE((
+                        SELECT array_agg(exercise_type ORDER BY exercise_type)
+                        FROM daily_summary_exercises
+                        WHERE daily_summary_id = daily_summary_logs.id
+                    ), ARRAY[]::TEXT[]) AS exercise_types
+                FROM daily_summary_logs
+                WHERE patient_id = %s
+                ORDER BY entry_date
+                """
+            )
+            activities = fetch_rows(
+                """
+                SELECT
+                    entry_date, time_of_day, activity_type, duration_mins,
+                    repetitions, pain_before, pain_during, pain_after_30mins,
+                    pain_after_2hrs
+                FROM activity_logs
+                WHERE patient_id = %s
+                ORDER BY entry_date, time_of_day, id
+                """
+            )
+            pain_characteristics = fetch_rows(
+                """
+                SELECT
+                    pain_characteristics.entry_date, primary_location,
+                    secondary_location, pain_intensity, pain_intensity_2,
+                    radiation, pinpoint_or_diffuse, deep_or_surface,
+                    COALESCE((
+                        SELECT array_agg(pain_type_code ORDER BY pain_type_code)
+                        FROM pain_characteristic_types
+                        WHERE pain_characteristic_types.pain_characteristic_id =
+                            pain_characteristics.id
+                    ), ARRAY[]::TEXT[]) AS pain_type_codes
+                FROM pain_characteristics
+                WHERE patient_id = %s
+                ORDER BY entry_date
+                """
+            )
+
+            pain_type_labels = {
+                code: label for label, code in PAIN_TYPE_CODES.items()
+            }
+            for pain_log in pain_characteristics:
+                pain_log["pain_types"] = [
+                    pain_type_labels.get(code, code)
+                    for code in pain_log.pop("pain_type_codes")
+                ]
+
+    return {
+        "daily_summaries": daily_summaries,
+        "activities": activities,
+        "pain_characteristics": pain_characteristics,
+    }
 
 
 def save_daily_summary(
@@ -145,7 +256,7 @@ def save_daily_summary(
 
     with _connect() as connection:
         with connection.cursor() as cursor:
-            _ensure_live_schema(cursor)
+            _set_rls_identity(cursor, patient_id)
             _ensure_patient(cursor, patient_id, care_team_label)
             cursor.execute(
                 """
@@ -250,7 +361,7 @@ def save_activities(
 
     with _connect() as connection:
         with connection.cursor() as cursor:
-            _ensure_live_schema(cursor)
+            _set_rls_identity(cursor, patient_id)
             _ensure_patient(cursor, patient_id, care_team_label)
             cursor.execute(
                 """
@@ -294,7 +405,7 @@ def save_pain_characteristics(
 
     with _connect() as connection:
         with connection.cursor() as cursor:
-            _ensure_live_schema(cursor)
+            _set_rls_identity(cursor, patient_id)
             _ensure_patient(cursor, patient_id, care_team_label)
             cursor.execute(
                 """

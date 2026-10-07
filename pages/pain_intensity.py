@@ -4,6 +4,7 @@ import psycopg
 import streamlit as st
 
 from database import save_pain_characteristics
+from user_identity import authenticated_user_id
 
 
 def main():
@@ -16,8 +17,9 @@ def main():
     )
     st.subheader("Pain characteristics page")
 
-    st.session_state.setdefault("patient_id", "")
-    st.caption("Submitting this form saves the pain log with your patient ID and selected date.")
+    st.caption(
+        "Submitting this form saves the pain log with your account and selected date."
+    )
 
     with st.container():
         st.write("### Choose date")
@@ -130,7 +132,7 @@ def main():
 
     submitted = st.button("Save pain log", type="primary", key="pain_submit_button")
     if submitted:
-        patient_id = st.session_state.get("patient_id", "").strip()
+        patient_id = authenticated_user_id()
         try:
             save_pain_characteristics(
                 patient_id,
@@ -145,7 +147,6 @@ def main():
                     "pinpoint_or_diffuse": pinpoint_or_diffuse,
                     "deep_or_surface": deep_or_surface,
                 },
-                care_team_label=st.session_state.get("care_team_label", ""),
             )
             st.success("Pain log saved to the database.")
         except (psycopg.Error, ValueError) as error:

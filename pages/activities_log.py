@@ -4,6 +4,7 @@ import psycopg
 import streamlit as st
 
 from database import save_activities
+from user_identity import authenticated_user_id
 
 st.session_state.setdefault("activity_count", 1)
 
@@ -23,7 +24,9 @@ def collect_activities():
                 "repetitions": st.session_state.get(f"repetitions_{index}", 0),
                 "pain_before": st.session_state.get(f"pain_before_{index}", 0),
                 "pain_during": st.session_state.get(f"pain_during_{index}", 0),
-                "pain_after_30mins": st.session_state.get(f"pain_after_30mins_{index}", 0),
+                "pain_after_30mins": st.session_state.get(
+                    f"pain_after_30mins_{index}", 0
+                ),
                 "pain_after_2hrs": st.session_state.get(f"pain_after_2hrs_{index}", 0),
             }
         )
@@ -38,8 +41,7 @@ def main():
     st.write("This tracker is to enable the patient to log daily activities.")
     st.subheader("Activities page")
 
-    st.session_state.setdefault("patient_id", "")
-    st.caption("Submitted activities are saved with your patient ID and selected date.")
+    st.caption("Submitted activities are saved with your account and selected date.")
 
     with st.container():
         st.write("### Choose date")
@@ -163,10 +165,9 @@ def main():
                     st.session_state["activity_selected_date"]
                 )
                 saved_count = save_activities(
-                    st.session_state.get("patient_id", ""),
+                    authenticated_user_id(),
                     activity_date,
                     collect_activities(),
-                    care_team_label=st.session_state.get("care_team_label", ""),
                 )
                 st.success(f"Saved {saved_count} activity log(s) to the database.")
             except (psycopg.Error, ValueError) as error:

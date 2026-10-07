@@ -1,6 +1,7 @@
 __pycache__/
 .agents/
 .env
+.env.example
 .vscode/
 .idea/
 .streamlit/secrets.toml

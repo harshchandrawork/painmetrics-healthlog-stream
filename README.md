@@ -21,7 +21,7 @@
 
 Pain and symptom experiences are difficult to summarize from memory alone. PainMetrics provides a repeatable way to record observations over time, including pain intensity at different times of day, associated activities, sleep, stiffness, and other daily factors.
 
-The project currently focuses on **authenticated data capture and persistence**. It stores records in PostgreSQL using a stable identity from an OpenID Connect sign-in and a relational schema. It does **not** currently provide statistical reports, trend charts, predictive models, or medical recommendations; the collected structured data can support those analyses in a separate, explicitly designed next step.
+The project focuses on **authenticated data capture, persistence, and personal descriptive analysis**. It stores records in PostgreSQL using a stable identity from an OpenID Connect sign-in and a relational schema. The Analysis page helps each signed-in user explore their own log coverage and descriptive trends; it does not provide diagnoses, predictions, treatment recommendations, or causal conclusions.
 
 ### Project goals
 
@@ -47,7 +47,13 @@ Record primary and secondary pain locations and intensities, pain type, whether 
 
 ### Additional capabilities
 
-- Streamlit multi-page navigation with OpenID Connect sign-in.
+- Public, unauthenticated showcase pages for getting started, project details,
+  and a synthetic sample-patient analysis; signed-in health-log pages remain
+  account-scoped.
+- A per-account Analysis page for descriptive trends in pain, sleep, stiffness,
+  daily routine, and activity-related pain ratings.
+- An authenticated sidebar showing the latest entry date for daily summaries,
+  activities, and pain logs.
 - Per-account data keys derived server-side from the verified identity-provider issuer and subject.
 - Current-date or past-date entry selection.
 - PostgreSQL persistence with parameterized database queries.
@@ -59,17 +65,32 @@ Record primary and secondary pain locations and intensities, pain type, whether 
 
 This project is relevant to data analysis and data science because it addresses an upstream challenge common in real analysis projects: collecting repeatable observations and modeling them so records can be joined, validated, and analyzed later.
 
-### Analytical opportunities supported by the data
+### Personal analysis supported by the app
 
-With an appropriately consented, sufficiently sized, and de-identified dataset, analysts could investigate questions such as:
+The authenticated Analysis page summarizes the current user's records and can help answer descriptive questions such as:
 
 - How do self-reported pain levels vary by time of day or across dates?
 - Are sleep quality, stiffness, fatigue, or activity duration associated with reported pain?
 - How do pain ratings change before and after different activities?
-- Which symptom dimensions have missing or inconsistent observations?
-- How do within-person patterns differ from population-level patterns?
+- How consistently have daily summaries and other log types been recorded, and which daily-summary fields are missing?
+- Which pain locations and characteristics have been recorded most often?
 
-These are **potential analyses, not current app outputs**. The repository does not currently calculate correlations, estimate causal effects, train machine-learning models, or display analytics dashboards. Any future analysis should account for repeated measures, missingness, self-report bias, confounding, and privacy; associations must not be presented as causal or diagnostic conclusions.
+The page provides descriptive views and date filtering for the signed-in user's own data. It does not calculate statistical significance, estimate causal effects, train machine-learning models, or make diagnostic conclusions. Interpretations should account for repeated measures, missingness, self-report bias, and confounding; comparisons are not evidence that one factor caused another. Cross-user or population analysis is not part of the app.
+
+### Public synthetic sample analysis
+
+Visitors can review the same analysis views using synthetic records for the
+reserved `sample_patient` account without signing in. The page adds calculated
+descriptive highlights for pain over time, daily pain by time of day, sleep
+duration groups, activity-related ratings, and recorded locations. Its
+synthetic-data notice makes clear that authenticated patients can see only
+analysis of their own data; public pages do not query real patient accounts.
+
+To create the deterministic sample dataset after initializing the
+schema, run `python seed_sample_data.py` with the configured database connection.
+It inserts 100 daily summaries, 100 activity records, and 100 pain-characteristic
+records for `sample_patient` (plus related lookup/link rows). The script is
+idempotent and refuses to overwrite conflicting records; it does not delete data.
 
 ### Data workflow
 
@@ -78,8 +99,8 @@ flowchart LR
     A[User enters dated observations] --> B[Streamlit pages]
     B --> C[Python persistence layer]
     C --> D[(PostgreSQL relational schema)]
-    D -. future, separate analysis .-> E[Cleaning and exploratory analysis]
-    E -. future .-> F[Visualizations or statistical models]
+    D --> E[Account-scoped descriptive analysis]
+    D -. future, separate analysis .-> F[De-identified population analysis]
 ```
 
 ## Technology stack
@@ -87,14 +108,14 @@ flowchart LR
 | Area | Technology | Role |
 |---|---|---|
 | Language | Python | Application logic and database setup |
-| User interface | Streamlit | Interactive multi-page data-entry application |
+| User interface | Streamlit | Authenticated multi-page data entry and personal analysis |
 | UI component | `streamlit-extras` | Selectable cards on the home page |
 | Database | PostgreSQL | Relational storage, constraints, keys, and reference data |
 | Database driver | Psycopg 3 | PostgreSQL connections and parameterized SQL |
 | Configuration | `python-dotenv` | Loads local database connection settings from `.env` |
 | Dependency management | `requirements.txt` | Python package installation |
 
-The requirements file also pins NumPy, pandas, Altair, Vega datasets, and yfinance. These packages are not currently used by the application source for analytics or visualizations.
+The requirements file also pins NumPy, pandas, Altair, Vega datasets, and yfinance. The Analysis page uses pandas for per-account descriptive summaries and Streamlit's native charts; other pinned analytical packages may support future extensions.
 
 ### Portfolio and engineering concepts
 
@@ -228,6 +249,10 @@ The application connects to PostgreSQL with Psycopg, so Supabase's hosted Postgr
    ```
 
    This creates the tables, keys, constraints, reference rows, and owner-scoped Row Level Security policies. Run initialization with the Supabase admin connection only; the Streamlit app should use a separate restricted role.
+   To populate the public demo with synthetic records, configure the intended
+   database in `.env` and run `python seed_sample_data.py`. The script writes only
+   to `sample_patient`, uses the row-level-security identity setting, and preserves
+   existing data.
 5. In the Supabase SQL Editor, create a role for the app. Replace the password with a unique random value, keep it private, and do not reuse your `postgres` password:
 
    ```sql
@@ -272,7 +297,9 @@ The application connects to PostgreSQL with Psycopg, so Supabase's hosted Postgr
 
    This importer supports the repository's CSV format; it does not import a PostgreSQL dump. To associate an import with one user's account, sign into the app, copy that account's data key from the collapsed section on Home, and use it as `IMPORT_PATIENT_ID`. For actual existing records, first make a private backup, check that source and target schemas match, and plan an explicit account-to-record mapping. Never upload sensitive data to GitHub.
 
-The current app captures and stores logs but does not yet include pages to browse, export, or delete saved history. Add and test those workflows before describing it as a complete personal health-record service.
+The app provides descriptive analysis but does not include a transaction-level
+history browser, export, or delete workflow. Add and test those workflows before
+describing it as a complete personal health-record service.
 
 ## Repository structure
 
@@ -280,11 +307,13 @@ The current app captures and stores logs but does not yet include pages to brows
 .
 ├── streamlit_app.py          # Streamlit entry point and home/navigation
 ├── pages/
+│   ├── analysis.py          # Personal analysis and public synthetic demo
 │   ├── daily_summary.py      # Daily symptom and routine entry
 │   ├── activities_log.py     # Activity and before/after pain entry
 │   └── pain_intensity.py     # Pain location and characteristic entry
 ├── database.py               # PostgreSQL persistence functions
 ├── db_init.py                # Fresh database/schema/reference-data setup
+├── seed_sample_data.py        # Idempotent synthetic sample-patient seeder
 ├── import_existing_data.py   # Optional local CSV importer
 ├── user_identity.py          # OIDC-derived account key
 ├── requirements.txt          # Python dependencies
@@ -299,6 +328,7 @@ The current app captures and stores logs but does not yet include pages to brows
 - Account data keys are SHA-256 hashes of the identity-provider issuer and subject; email addresses are not used as database keys.
 - The app stores self-reported health-related information, including pain, medication, and symptom notes. Use synthetic data while evaluating the project.
 - The CSV importer is tracked, but local sample data remains excluded from the public repository. Fresh installation creates an empty application database with required reference rows.
+- The public showcase reads only the synthetic `sample_patient` account; signed-in analysis remains scoped to each account's server-derived identity.
 
 ## Privacy, safety, and limitations
 
@@ -308,7 +338,7 @@ The current app captures and stores logs but does not yet include pages to brows
 - The app derives account ownership server-side and the restricted database role is governed by RLS policies, but it has not undergone a security review or compliance assessment. Protect both the database role secret and the Supabase admin credentials.
 - Anyone deploying a modified copy is responsible for securing the application, PostgreSQL instance, credentials, backups, network access, and any data they collect, as well as assessing applicable laws and institutional policies.
 - Health observations are self-reported and may be incomplete, inaccurate, or affected by selection bias. They should not be treated as clinical evidence without appropriate review.
-- Database persistence and entry forms are implemented; analytics charts, export/report workflows, automated data-quality reporting, and predictive modeling are not currently part of the app.
+- Database persistence, entry forms, and account-scoped descriptive analytics are implemented; export/report workflows and predictive modeling are not currently part of the app.
 
 ## Development notes
 
@@ -320,8 +350,7 @@ There is currently no committed automated test suite or CI workflow. Before rely
 
 Possible next steps for the project include:
 
-- Add a reproducible synthetic dataset and sample analysis notebook.
-- Build exploratory trend charts with clearly documented aggregation and filtering choices.
+- Expand personal trend views with clearly documented aggregation and filtering choices.
 - Add data-quality checks and a documented export path for analysis.
 - Add automated tests for form-to-database behavior and schema initialization.
 - Complete a security, privacy, consent, and data-retention review before any real-world data collection.
